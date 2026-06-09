@@ -1,0 +1,12 @@
+[project]
+name = "sdom-resiliency-evaluations"
+version = "0.1.0"
+description = "Reproduction package for the MEA SDOM resiliency evaluations (PR #70 storage soc-slack model)."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "sdom[xpress]",
+]
+
+[tool.uv.sources]
+sdom = { path = "../../pySDOM/SDOM", editable = true }
