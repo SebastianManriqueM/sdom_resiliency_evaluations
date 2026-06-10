@@ -1,13 +1,16 @@
 """Aggregate per-SOC resiliency results into a sweep summary.
 
-Reads each ``results/resiliency_mea_<tag>/aggregate_metrics.csv`` and
-``results/resiliency_mea_<tag>/recovery_soc_slack.csv`` and emits:
+Reads each ``results/resiliency_mea_<tag>/aggregate_metrics.csv``,
+``results/resiliency_mea_<tag>/recovery_soc_slack.csv`` and
+``results/resiliency_mea_<tag>/designed_system/summary.json`` and emits:
 
 * ``results/sweep_summary/sweep_aggregate_metrics.csv`` (one row per tag)
 * ``results/sweep_summary/{LOLP,LOLE,EUE_mean_p95_p99,max_unserved_MW_mean_p95_p99}.png``
 * ``results/sweep_summary/sweep_soc_slack_metrics.csv`` (one row per tag x tech)
 * ``results/sweep_summary/{SOC_slack_probability,SOC_slack_MWh_mean_p95_p99,
   SOC_slack_fraction_mean,SOC_slack_cost_total_USD}.png``
+* ``results/sweep_summary/sweep_objective_costs.csv`` (one row per tag)
+* ``results/sweep_summary/objective_total_USD.png``
 
 Run from the repo root with the project venv active::
 
@@ -16,6 +19,7 @@ Run from the repo root with the project venv active::
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -237,6 +241,195 @@ def _save_soc_slack_plots(slack_df: pd.DataFrame) -> None:
     plt.close(fig)
 
 
+_OBJECTIVE_COST_COMPONENTS: tuple[str, ...] = (
+    "thermal_var_USD",
+    "storage_var_USD",
+    "imports_USD",
+    "exports_USD",
+    "demand_charges_USD",
+    "curtailment_USD",
+    "fom_USD",
+)
+
+
+def _collect_objective() -> pd.DataFrame:
+    rows: list[dict[str, float | str]] = []
+    for entry in sorted(RESULTS_ROOT.iterdir()):
+        if not entry.is_dir():
+            continue
+        m = TAG_PATTERN.match(entry.name)
+        if not m:
+            continue
+        summary_file = entry / "designed_system" / "summary.json"
+        if not summary_file.exists():
+            continue
+        with summary_file.open("r", encoding="utf-8") as fh:
+            summary = json.load(fh)
+        baseline = summary.get("baseline_costs", {})
+        tag = m.group("tag")
+        soc_frac = float(tag.replace("SOC", ""))
+        row: dict[str, float | str] = {
+            "tag": tag,
+            "soc_frac": soc_frac,
+            "objective_total_USD": float(baseline.get("objective_total_USD", float("nan"))),
+            "solver_status": str(baseline.get("solver_status", "")),
+        }
+        for comp in _OBJECTIVE_COST_COMPONENTS:
+            row[comp] = float(baseline.get(comp, 0.0))
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values("soc_frac").reset_index(drop=True)
+
+
+def _save_objective_plot(df: pd.DataFrame) -> None:
+    x = df["soc_frac"].to_numpy()
+    obj = df["objective_total_USD"].to_numpy() / 1e6
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    bars = ax.bar(
+        [f"{v:g}" for v in x],
+        obj,
+        color="C2",
+        edgecolor="black",
+        alpha=0.85,
+    )
+    for bar, value in zip(bars, obj):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+    ax.set_xlabel("H2 SOC floor fraction")
+    ax.set_ylabel("Objective total [M USD]")
+    ax.set_title("Designed-system objective cost vs H2 SOC floor")
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(OUT_DIR / "objective_total_USD.png", dpi=120)
+    plt.close(fig)
+
+
+def _annotate_points(ax, x: np.ndarray, y: np.ndarray, tags: list[str]) -> None:
+    for xi, yi, tag in zip(x, y, tags):
+        if np.isnan(yi):
+            continue
+        ax.annotate(
+            tag,
+            xy=(xi, yi),
+            xytext=(4, 4),
+            textcoords="offset points",
+            fontsize=8,
+        )
+
+
+def _save_metric_vs_cost_plots(metrics_df: pd.DataFrame, obj_df: pd.DataFrame) -> pd.DataFrame:
+    merged = metrics_df.merge(
+        obj_df[["tag", "objective_total_USD"]],
+        on="tag",
+        how="inner",
+    ).sort_values("objective_total_USD").reset_index(drop=True)
+    if merged.empty:
+        return merged
+
+    cost = merged["objective_total_USD"].to_numpy() / 1e6
+    tags = merged["tag"].tolist()
+
+    single_metric_specs = [
+        ("LOLP", "LOLP", "C0", "Loss-of-load probability vs baseline cost", "LOLP_vs_cost.png"),
+        (
+            "LOLE_hours_per_event",
+            "LOLE [hours / anchor]",
+            "C1",
+            "Loss-of-load expectation vs baseline cost",
+            "LOLE_vs_cost.png",
+        ),
+    ]
+    for column, ylabel, color, title, fname in single_metric_specs:
+        y = merged[column].to_numpy()
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(cost, y, marker="o", color=color)
+        _annotate_points(ax, cost, y, tags)
+        ax.set_xlabel("Baseline objective cost [M USD]")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(OUT_DIR / fname, dpi=120)
+        plt.close(fig)
+
+    multi_metric_specs = [
+        (
+            "EUE [MWh / anchor]",
+            "EUE vs baseline cost",
+            "EUE_vs_cost.png",
+            [
+                ("EUE_mean_MWh", "mean", "o", "-"),
+                ("EUE_p95_MWh", "p95", "s", "--"),
+                ("EUE_p99_MWh", "p99", "^", ":"),
+            ],
+        ),
+        (
+            "max unserved power [MW]",
+            "Max unserved power vs baseline cost",
+            "max_unserved_MW_vs_cost.png",
+            [
+                ("max_unserved_MW_mean", "mean", "o", "-"),
+                ("max_unserved_MW_p95", "p95", "s", "--"),
+                ("max_unserved_MW_p99", "p99", "^", ":"),
+            ],
+        ),
+    ]
+    for ylabel, title, fname, series in multi_metric_specs:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        for column, label, marker, linestyle in series:
+            y = merged[column].to_numpy()
+            ax.plot(cost, y, marker=marker, linestyle=linestyle, label=label)
+        annotate_y = merged[series[0][0]].to_numpy()
+        _annotate_points(ax, cost, annotate_y, tags)
+        ax.set_xlabel("Baseline objective cost [M USD]")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(OUT_DIR / fname, dpi=120)
+        plt.close(fig)
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8), sharex=True)
+    overview_specs = [
+        (axes[0, 0], "LOLP", "LOLP", "C0", None),
+        (axes[0, 1], "LOLE_hours_per_event", "LOLE [hours / anchor]", "C1", None),
+        (axes[1, 0], "EUE_mean_MWh", "EUE mean [MWh / anchor]", "C2", "EUE_p95_MWh"),
+        (axes[1, 1], "max_unserved_MW_mean", "max unserved mean [MW]", "C3", "max_unserved_MW_p95"),
+    ]
+    for ax, column, ylabel, color, p95_column in overview_specs:
+        y = merged[column].to_numpy()
+        ax.plot(cost, y, marker="o", color=color, label="mean" if p95_column else None)
+        if p95_column is not None:
+            ax.plot(
+                cost,
+                merged[p95_column].to_numpy(),
+                marker="s",
+                linestyle="--",
+                color=color,
+                alpha=0.6,
+                label="p95",
+            )
+            ax.legend(fontsize=8)
+        _annotate_points(ax, cost, y, tags)
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+    for ax in axes[1, :]:
+        ax.set_xlabel("Baseline objective cost [M USD]")
+    fig.suptitle("Resiliency metrics vs baseline objective cost (annotated by H2 SOC floor)")
+    fig.tight_layout()
+    fig.savefig(OUT_DIR / "metrics_vs_cost_overview.png", dpi=120)
+    plt.close(fig)
+
+    return merged
+
+
 def main() -> None:
     _configure_logging()
     log = logging.getLogger("sweep_summary")
@@ -275,6 +468,40 @@ def main() -> None:
 
     _save_soc_slack_plots(slack_df)
     log.info("SOC-slack sweep plots saved under %s.", OUT_DIR)
+
+    obj_df = _collect_objective()
+    if obj_df.empty:
+        log.warning(
+            "No per-case designed_system/summary.json files found under %s; "
+            "skipping objective-cost sweep summary.",
+            RESULTS_ROOT,
+        )
+        return
+
+    obj_csv = OUT_DIR / "sweep_objective_costs.csv"
+    obj_df.to_csv(obj_csv, index=False)
+    log.info(
+        "Sweep objective costs (%d cases) saved to %s.",
+        len(obj_df),
+        obj_csv,
+    )
+    log.info("\n%s", obj_df.to_string(index=False))
+
+    _save_objective_plot(obj_df)
+    log.info("Objective-cost sweep plot saved under %s.", OUT_DIR)
+
+    merged = _save_metric_vs_cost_plots(df, obj_df)
+    if merged.empty:
+        log.warning(
+            "Could not join aggregate metrics with objective costs; "
+            "skipping metrics-vs-cost plots."
+        )
+    else:
+        log.info(
+            "Resiliency-vs-cost plots saved under %s (%d cases plotted).",
+            OUT_DIR,
+            len(merged),
+        )
 
 
 if __name__ == "__main__":
