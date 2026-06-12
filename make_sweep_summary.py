@@ -1,20 +1,22 @@
-"""Aggregate per-SOC resiliency results into a sweep summary.
+"""Aggregate per-SOC resiliency results into per-case sweep summaries.
 
-Reads each ``results/resiliency_mea_<tag>/aggregate_metrics.csv``,
-``results/resiliency_mea_<tag>/recovery_soc_slack.csv`` and
-``results/resiliency_mea_<tag>/designed_system/summary.json`` and emits:
+For each case (``mea``, ``pge``, ...) present under ``results/`` as
+``results/resiliency_<case>_<tag>/`` folders, reads each tag's
+``aggregate_metrics.csv``, ``recovery_soc_slack.csv`` and
+``designed_system/summary.json`` and emits, under
+``results/sweep_summary/<case>/``:
 
-* ``results/sweep_summary/sweep_aggregate_metrics.csv`` (one row per tag)
-* ``results/sweep_summary/{LOLP,LOLE,EUE_mean_p95_p99,max_unserved_MW_mean_p95_p99}.png``
-* ``results/sweep_summary/sweep_soc_slack_metrics.csv`` (one row per tag x tech)
-* ``results/sweep_summary/{SOC_slack_probability,SOC_slack_MWh_mean_p95_p99,
+* ``sweep_aggregate_metrics.csv`` (one row per tag)
+* ``{LOLP,LOLE,EUE_mean_p95_p99,max_unserved_MW_mean_p95_p99}.png``
+* ``sweep_soc_slack_metrics.csv`` (one row per tag x tech)
+* ``{SOC_slack_probability,SOC_slack_MWh_mean_p95_p99,
   SOC_slack_fraction_mean,SOC_slack_cost_total_USD}.png``
-* ``results/sweep_summary/sweep_objective_costs.csv`` (one row per tag)
-* ``results/sweep_summary/objective_total_USD.png``
+* ``sweep_objective_costs.csv`` (one row per tag)
+* ``objective_total_USD.png`` plus ``*_vs_cost.png`` overlays
 
 Run from the repo root with the project venv active::
 
-    python ___sweep_summary.py
+    python make_sweep_summary.py
 """
 
 from __future__ import annotations
@@ -31,8 +33,14 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent
 RESULTS_ROOT = REPO_ROOT / "results"
-OUT_DIR = RESULTS_ROOT / "sweep_summary"
-TAG_PATTERN = re.compile(r"^resiliency_mea_(?P<tag>[0-9.]+SOC)$")
+SWEEP_ROOT = RESULTS_ROOT / "sweep_summary"
+CASE_PATTERN = re.compile(r"^resiliency_(?P<case>[a-z0-9]+)_(?P<tag>[0-9.]+SOC)$")
+# Per-case subfolder under ``results/`` that holds the per-tag run
+# directories. Order controls the iteration order in main().
+CASE_DIRS: dict[str, str] = {
+    "mea": "MEA",
+    "pge": "PG_E",
+}
 SLACK_EPS = 1e-6
 
 
@@ -73,22 +81,34 @@ def _compute_expected_opex(case_dir: Path) -> float:
     return obj_sum / n
 
 
-def _collect() -> pd.DataFrame:
-    rows: list[dict[str, float | str]] = []
-    for entry in sorted(RESULTS_ROOT.iterdir()):
+def _case_root(case: str) -> Path:
+    return RESULTS_ROOT / CASE_DIRS.get(case, case)
+
+
+def _iter_case_dirs(case: str):
+    root = _case_root(case)
+    if not root.exists():
+        return
+    for entry in sorted(root.iterdir()):
         if not entry.is_dir():
             continue
-        m = TAG_PATTERN.match(entry.name)
-        if not m:
+        m = CASE_PATTERN.match(entry.name)
+        if not m or m.group("case") != case:
             continue
+        yield entry, m.group("tag")
+
+
+def _collect(case: str) -> pd.DataFrame:
+    rows: list[dict[str, float | str]] = []
+    for entry, tag in _iter_case_dirs(case):
         agg_file = entry / "aggregate_metrics.csv"
         if not agg_file.exists():
             continue
-        tag = m.group("tag")
         soc_frac = float(tag.replace("SOC", ""))
         metrics = _read_aggregate(entry)
         rows.append(
             {
+                "case": case,
                 "tag": tag,
                 "soc_frac": soc_frac,
                 "LOLP": metrics.get("LOLP", 0.0),
@@ -109,7 +129,7 @@ def _collect() -> pd.DataFrame:
     return df
 
 
-def _save_plots(df: pd.DataFrame) -> None:
+def _save_plots(df: pd.DataFrame, out_dir: Path) -> None:
     x = df["soc_frac"].to_numpy()
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -119,7 +139,7 @@ def _save_plots(df: pd.DataFrame) -> None:
     ax.set_title("Loss-of-load probability vs H2 SOC floor")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "LOLP.png", dpi=120)
+    fig.savefig(out_dir / "LOLP.png", dpi=120)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -129,7 +149,7 @@ def _save_plots(df: pd.DataFrame) -> None:
     ax.set_title("Loss-of-load expectation vs H2 SOC floor")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "LOLE.png", dpi=120)
+    fig.savefig(out_dir / "LOLE.png", dpi=120)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -142,7 +162,7 @@ def _save_plots(df: pd.DataFrame) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "EUE_mean_p95_p99.png", dpi=120)
+    fig.savefig(out_dir / "EUE_mean_p95_p99.png", dpi=120)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -155,7 +175,7 @@ def _save_plots(df: pd.DataFrame) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "max_unserved_MW_mean_p95_p99.png", dpi=120)
+    fig.savefig(out_dir / "max_unserved_MW_mean_p95_p99.png", dpi=120)
     plt.close(fig)
 
     # Expected OPEX = sum(per-anchor objective) / 8760, plotted in M USD.
@@ -177,22 +197,16 @@ def _save_plots(df: pd.DataFrame) -> None:
     ax.set_title("Expected OPEX = sum(per-anchor objective) / 8760")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "expected_opex_USD.png", dpi=120)
+    fig.savefig(out_dir / "expected_opex_USD.png", dpi=120)
     plt.close(fig)
 
 
-def _collect_soc_slack() -> pd.DataFrame:
+def _collect_soc_slack(case: str) -> pd.DataFrame:
     rows: list[dict[str, float | str]] = []
-    for entry in sorted(RESULTS_ROOT.iterdir()):
-        if not entry.is_dir():
-            continue
-        m = TAG_PATTERN.match(entry.name)
-        if not m:
-            continue
+    for entry, tag in _iter_case_dirs(case):
         slack_file = entry / "recovery_soc_slack.csv"
         if not slack_file.exists():
             continue
-        tag = m.group("tag")
         soc_frac = float(tag.replace("SOC", ""))
         df = pd.read_csv(slack_file)
         for tech, group in df.groupby("tech", sort=True):
@@ -209,6 +223,7 @@ def _collect_soc_slack() -> pd.DataFrame:
                 frac_p95 = float("nan")
             rows.append(
                 {
+                    "case": case,
                     "tag": tag,
                     "soc_frac": soc_frac,
                     "tech": str(tech),
@@ -230,7 +245,7 @@ def _collect_soc_slack() -> pd.DataFrame:
     )
 
 
-def _save_soc_slack_plots(slack_df: pd.DataFrame) -> None:
+def _save_soc_slack_plots(slack_df: pd.DataFrame, out_dir: Path) -> None:
     techs = list(dict.fromkeys(slack_df["tech"].tolist()))
     markers = ["o", "s", "^", "D", "v", "P"]
     tech_style = {tech: markers[i % len(markers)] for i, tech in enumerate(techs)}
@@ -245,7 +260,7 @@ def _save_soc_slack_plots(slack_df: pd.DataFrame) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend(title="tech")
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "SOC_slack_probability.png", dpi=120)
+    fig.savefig(out_dir / "SOC_slack_probability.png", dpi=120)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -260,7 +275,7 @@ def _save_soc_slack_plots(slack_df: pd.DataFrame) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "SOC_slack_MWh_mean_p95_p99.png", dpi=120)
+    fig.savefig(out_dir / "SOC_slack_MWh_mean_p95_p99.png", dpi=120)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -273,7 +288,7 @@ def _save_soc_slack_plots(slack_df: pd.DataFrame) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend(title="tech")
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "SOC_slack_fraction_mean.png", dpi=120)
+    fig.savefig(out_dir / "SOC_slack_fraction_mean.png", dpi=120)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -286,7 +301,7 @@ def _save_soc_slack_plots(slack_df: pd.DataFrame) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend(title="tech")
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "SOC_slack_cost_total_USD.png", dpi=120)
+    fig.savefig(out_dir / "SOC_slack_cost_total_USD.png", dpi=120)
     plt.close(fig)
 
 
@@ -301,23 +316,18 @@ _OBJECTIVE_COST_COMPONENTS: tuple[str, ...] = (
 )
 
 
-def _collect_objective() -> pd.DataFrame:
+def _collect_objective(case: str) -> pd.DataFrame:
     rows: list[dict[str, float | str]] = []
-    for entry in sorted(RESULTS_ROOT.iterdir()):
-        if not entry.is_dir():
-            continue
-        m = TAG_PATTERN.match(entry.name)
-        if not m:
-            continue
+    for entry, tag in _iter_case_dirs(case):
         summary_file = entry / "designed_system" / "summary.json"
         if not summary_file.exists():
             continue
         with summary_file.open("r", encoding="utf-8") as fh:
             summary = json.load(fh)
         baseline = summary.get("baseline_costs", {})
-        tag = m.group("tag")
         soc_frac = float(tag.replace("SOC", ""))
         row: dict[str, float | str] = {
+            "case": case,
             "tag": tag,
             "soc_frac": soc_frac,
             "objective_total_USD": float(baseline.get("objective_total_USD", float("nan"))),
@@ -329,7 +339,7 @@ def _collect_objective() -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("soc_frac").reset_index(drop=True)
 
 
-def _save_objective_plot(df: pd.DataFrame) -> None:
+def _save_objective_plot(df: pd.DataFrame, out_dir: Path) -> None:
     x = df["soc_frac"].to_numpy()
     obj = df["objective_total_USD"].to_numpy() / 1e6
 
@@ -355,7 +365,7 @@ def _save_objective_plot(df: pd.DataFrame) -> None:
     ax.set_title("Designed-system objective cost vs H2 SOC floor")
     ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "objective_total_USD.png", dpi=120)
+    fig.savefig(out_dir / "objective_total_USD.png", dpi=120)
     plt.close(fig)
 
 
@@ -372,7 +382,11 @@ def _annotate_points(ax, x: np.ndarray, y: np.ndarray, tags: list[str]) -> None:
         )
 
 
-def _save_metric_vs_cost_plots(metrics_df: pd.DataFrame, obj_df: pd.DataFrame) -> pd.DataFrame:
+def _save_metric_vs_cost_plots(
+    metrics_df: pd.DataFrame,
+    obj_df: pd.DataFrame,
+    out_dir: Path,
+) -> pd.DataFrame:
     merged = metrics_df.merge(
         obj_df[["tag", "objective_total_USD"]],
         on="tag",
@@ -404,7 +418,7 @@ def _save_metric_vs_cost_plots(metrics_df: pd.DataFrame, obj_df: pd.DataFrame) -
         ax.set_title(title)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
-        fig.savefig(OUT_DIR / fname, dpi=120)
+        fig.savefig(out_dir / fname, dpi=120)
         plt.close(fig)
 
     multi_metric_specs = [
@@ -442,7 +456,7 @@ def _save_metric_vs_cost_plots(metrics_df: pd.DataFrame, obj_df: pd.DataFrame) -
         ax.grid(True, alpha=0.3)
         ax.legend()
         fig.tight_layout()
-        fig.savefig(OUT_DIR / fname, dpi=120)
+        fig.savefig(out_dir / fname, dpi=120)
         plt.close(fig)
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 8), sharex=True)
@@ -473,84 +487,111 @@ def _save_metric_vs_cost_plots(metrics_df: pd.DataFrame, obj_df: pd.DataFrame) -
         ax.set_xlabel("Baseline objective cost [M USD]")
     fig.suptitle("Resiliency metrics vs baseline objective cost (annotated by H2 SOC floor)")
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "metrics_vs_cost_overview.png", dpi=120)
+    fig.savefig(out_dir / "metrics_vs_cost_overview.png", dpi=120)
     plt.close(fig)
 
     return merged
+
+
+def _discover_cases() -> list[str]:
+    cases: list[str] = []
+    for case in CASE_DIRS:
+        root = _case_root(case)
+        if not root.exists():
+            continue
+        if any(CASE_PATTERN.match(p.name) for p in root.iterdir() if p.is_dir()):
+            cases.append(case)
+    return cases
+
+
+def _process_case(case: str, log: logging.Logger) -> None:
+    out_dir = SWEEP_ROOT / case
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    df = _collect(case)
+    if df.empty:
+        log.warning(
+            "[%s] No per-case aggregate_metrics.csv files found under %s.",
+            case,
+            RESULTS_ROOT,
+        )
+        return
+
+    out_csv = out_dir / "sweep_aggregate_metrics.csv"
+    df.to_csv(out_csv, index=False)
+    log.info("[%s] Sweep aggregate metrics (%d cases) saved to %s.", case, len(df), out_csv)
+    log.info("\n%s", df.to_string(index=False))
+
+    _save_plots(df, out_dir)
+    log.info("[%s] Sweep plots saved under %s.", case, out_dir)
+
+    slack_df = _collect_soc_slack(case)
+    if slack_df.empty:
+        log.warning(
+            "[%s] No per-case recovery_soc_slack.csv files found under %s; "
+            "skipping SOC-slack sweep summary.",
+            case,
+            RESULTS_ROOT,
+        )
+    else:
+        slack_csv = out_dir / "sweep_soc_slack_metrics.csv"
+        slack_df.to_csv(slack_csv, index=False)
+        log.info(
+            "[%s] Sweep SOC-slack metrics (%d tag x tech rows) saved to %s.",
+            case,
+            len(slack_df),
+            slack_csv,
+        )
+        log.info("\n%s", slack_df.to_string(index=False))
+        _save_soc_slack_plots(slack_df, out_dir)
+        log.info("[%s] SOC-slack sweep plots saved under %s.", case, out_dir)
+
+    obj_df = _collect_objective(case)
+    if obj_df.empty:
+        log.warning(
+            "[%s] No per-case designed_system/summary.json files found under %s; "
+            "skipping objective-cost sweep summary.",
+            case,
+            RESULTS_ROOT,
+        )
+        return
+
+    obj_csv = out_dir / "sweep_objective_costs.csv"
+    obj_df.to_csv(obj_csv, index=False)
+    log.info("[%s] Sweep objective costs (%d cases) saved to %s.", case, len(obj_df), obj_csv)
+    log.info("\n%s", obj_df.to_string(index=False))
+
+    _save_objective_plot(obj_df, out_dir)
+    log.info("[%s] Objective-cost sweep plot saved under %s.", case, out_dir)
+
+    merged = _save_metric_vs_cost_plots(df, obj_df, out_dir)
+    if merged.empty:
+        log.warning(
+            "[%s] Could not join aggregate metrics with objective costs; "
+            "skipping metrics-vs-cost plots.",
+            case,
+        )
+    else:
+        log.info(
+            "[%s] Resiliency-vs-cost plots saved under %s (%d cases plotted).",
+            case,
+            out_dir,
+            len(merged),
+        )
 
 
 def main() -> None:
     _configure_logging()
     log = logging.getLogger("sweep_summary")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    df = _collect()
-    if df.empty:
-        log.warning("No per-case aggregate_metrics.csv files found under %s.", RESULTS_ROOT)
+    SWEEP_ROOT.mkdir(parents=True, exist_ok=True)
+    cases = _discover_cases()
+    if not cases:
+        log.warning("No resiliency case directories found under %s.", RESULTS_ROOT)
         return
-
-    out_csv = OUT_DIR / "sweep_aggregate_metrics.csv"
-    df.to_csv(out_csv, index=False)
-    log.info("Sweep aggregate metrics (%d cases) saved to %s.", len(df), out_csv)
-    log.info("\n%s", df.to_string(index=False))
-
-    _save_plots(df)
-    log.info("Sweep plots saved under %s.", OUT_DIR)
-
-    slack_df = _collect_soc_slack()
-    if slack_df.empty:
-        log.warning(
-            "No per-case recovery_soc_slack.csv files found under %s; "
-            "skipping SOC-slack sweep summary.",
-            RESULTS_ROOT,
-        )
-        return
-
-    slack_csv = OUT_DIR / "sweep_soc_slack_metrics.csv"
-    slack_df.to_csv(slack_csv, index=False)
-    log.info(
-        "Sweep SOC-slack metrics (%d tag x tech rows) saved to %s.",
-        len(slack_df),
-        slack_csv,
-    )
-    log.info("\n%s", slack_df.to_string(index=False))
-
-    _save_soc_slack_plots(slack_df)
-    log.info("SOC-slack sweep plots saved under %s.", OUT_DIR)
-
-    obj_df = _collect_objective()
-    if obj_df.empty:
-        log.warning(
-            "No per-case designed_system/summary.json files found under %s; "
-            "skipping objective-cost sweep summary.",
-            RESULTS_ROOT,
-        )
-        return
-
-    obj_csv = OUT_DIR / "sweep_objective_costs.csv"
-    obj_df.to_csv(obj_csv, index=False)
-    log.info(
-        "Sweep objective costs (%d cases) saved to %s.",
-        len(obj_df),
-        obj_csv,
-    )
-    log.info("\n%s", obj_df.to_string(index=False))
-
-    _save_objective_plot(obj_df)
-    log.info("Objective-cost sweep plot saved under %s.", OUT_DIR)
-
-    merged = _save_metric_vs_cost_plots(df, obj_df)
-    if merged.empty:
-        log.warning(
-            "Could not join aggregate metrics with objective costs; "
-            "skipping metrics-vs-cost plots."
-        )
-    else:
-        log.info(
-            "Resiliency-vs-cost plots saved under %s (%d cases plotted).",
-            OUT_DIR,
-            len(merged),
-        )
+    log.info("Discovered cases: %s.", cases)
+    for case in cases:
+        _process_case(case, log)
 
 
 if __name__ == "__main__":
