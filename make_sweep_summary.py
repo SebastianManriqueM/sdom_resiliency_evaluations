@@ -50,6 +50,29 @@ def _read_aggregate(case_dir: Path) -> dict[str, float]:
     return {idx: float(val) for idx, val in df[col].items()}
 
 
+def _compute_expected_opex(case_dir: Path) -> float:
+    """Fallback ``expected_opex_USD`` for cases without it in aggregate_metrics.
+
+    Reads ``per_hour_metrics.csv`` and computes
+    ``sum(objective_value) / len(rows)`` (NaN-safe). Older runs produced
+    before the metric was added to ``run_resiliency_evaluation.py`` lack the
+    aggregate row but still carry the per-anchor objective values.
+    """
+    path = case_dir / "per_hour_metrics.csv"
+    if not path.exists():
+        return float("nan")
+    df = pd.read_csv(path)
+    if "objective_value" not in df.columns or df.empty:
+        return float("nan")
+    if "solver_status" in df.columns:
+        df = df[df["solver_status"] != "error"]
+    n = len(df)
+    if n == 0:
+        return float("nan")
+    obj_sum = float(df["objective_value"].astype(float).dropna().sum())
+    return obj_sum / n
+
+
 def _collect() -> pd.DataFrame:
     rows: list[dict[str, float | str]] = []
     for entry in sorted(RESULTS_ROOT.iterdir()):
@@ -76,6 +99,10 @@ def _collect() -> pd.DataFrame:
                 "max_unserved_MW_mean": metrics.get("max_unserved_MW_mean", 0.0),
                 "max_unserved_MW_p95": metrics.get("max_unserved_MW_p95", 0.0),
                 "max_unserved_MW_p99": metrics.get("max_unserved_MW_p99", 0.0),
+                "expected_opex_USD": metrics.get(
+                    "expected_opex_USD",
+                    _compute_expected_opex(entry),
+                ),
             }
         )
     df = pd.DataFrame(rows).sort_values("soc_frac").reset_index(drop=True)
@@ -129,6 +156,28 @@ def _save_plots(df: pd.DataFrame) -> None:
     ax.legend()
     fig.tight_layout()
     fig.savefig(OUT_DIR / "max_unserved_MW_mean_p95_p99.png", dpi=120)
+    plt.close(fig)
+
+    # Expected OPEX = sum(per-anchor objective) / 8760, plotted in M USD.
+    fig, ax = plt.subplots(figsize=(6, 4))
+    y = df["expected_opex_USD"].to_numpy() / 1e6
+    ax.plot(x, y, marker="o", color="C4")
+    for xi, yi in zip(x, y):
+        if np.isnan(yi):
+            continue
+        ax.annotate(
+            f"{yi:.2f}",
+            xy=(xi, yi),
+            xytext=(4, 4),
+            textcoords="offset points",
+            fontsize=8,
+        )
+    ax.set_xlabel("H2 SOC floor fraction")
+    ax.set_ylabel("Expected OPEX [M USD / hour]")
+    ax.set_title("Expected OPEX = sum(per-anchor objective) / 8760")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(OUT_DIR / "expected_opex_USD.png", dpi=120)
     plt.close(fig)
 
 

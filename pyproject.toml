@@ -5,8 +5,5 @@ description = "Reproduction package for the MEA SDOM resiliency evaluations (PR 
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "sdom[xpress]",
+    "sdom[xpress]==0.2.3",
 ]
-
-[tool.uv.sources]
-sdom = { path = "../../pySDOM/SDOM", editable = true }

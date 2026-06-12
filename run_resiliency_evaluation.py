@@ -202,7 +202,13 @@ def _h2_only_soc_map(storage_caps, h2_floor_mwh: float) -> dict[str, float]:
 
 
 def _summarize_metrics(per_hour_df: pd.DataFrame) -> dict[str, float]:
-    """Compute aggregate resiliency metrics from the per-hour record table."""
+    """Compute aggregate resiliency metrics from the per-hour record table.
+
+    ``expected_opex_USD`` is the sum of per-anchor objective values divided
+    by the number of hours in the annual horizon (``len(df)``, normally
+    8760). The per-anchor objective is the outage+recovery LP optimum
+    (unserved + curtailment + soc-slack penalties + prorated FOM).
+    """
     df = per_hour_df.copy()
     if "solver_status" in df.columns:
         df = df[df["solver_status"] != "error"]
@@ -211,6 +217,13 @@ def _summarize_metrics(per_hour_df: pd.DataFrame) -> dict[str, float]:
     use_hours = df["USE_hours"].astype(float)
     max_unserved = df["max_unserved_MW"].astype(float)
     has_loss = eue > 1e-6
+    objective = (
+        df["objective_value"].astype(float)
+        if "objective_value" in df.columns
+        else pd.Series(dtype=float)
+    )
+    obj_sum = float(objective.dropna().sum()) if not objective.empty else 0.0
+    expected_opex = (obj_sum / n) if n else 0.0
     return {
         "n_anchor_hours": float(n),
         "LOLP": float(has_loss.mean()) if n else 0.0,
@@ -224,6 +237,7 @@ def _summarize_metrics(per_hour_df: pd.DataFrame) -> dict[str, float]:
         "max_unserved_MW_mean": float(max_unserved.mean()) if n else 0.0,
         "max_unserved_MW_p95": float(max_unserved.quantile(0.95)) if n else 0.0,
         "max_unserved_MW_max": float(max_unserved.max()) if n else 0.0,
+        "expected_opex_USD": expected_opex,
     }
 
 
