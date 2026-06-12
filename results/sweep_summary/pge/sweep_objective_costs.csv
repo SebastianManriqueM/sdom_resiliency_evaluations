@@ -1,0 +1,7 @@
+case,tag,soc_frac,objective_total_USD,solver_status,thermal_var_USD,storage_var_USD,imports_USD,exports_USD,demand_charges_USD,curtailment_USD,fom_USD
+pge,0.5SOC,0.5,995860.3629956,optimal,0.0,0.0,0.0,0.0,0.0,0.0,995860.3629956
+pge,0.6SOC,0.6,995860.3629956,optimal,0.0,0.0,0.0,0.0,0.0,0.0,995860.3629956
+pge,0.7SOC,0.7,995860.3629956,optimal,0.0,0.0,0.0,0.0,0.0,0.0,995860.3629956
+pge,0.8SOC,0.8,995860.3629956,optimal,0.0,0.0,0.0,0.0,0.0,0.0,995860.3629956
+pge,0.9SOC,0.9,995860.3629956,optimal,0.0,0.0,0.0,0.0,0.0,0.0,995860.3629956
+pge,1.0SOC,1.0,995860.3629956,optimal,0.0,0.0,0.0,0.0,0.0,0.0,995860.3629956

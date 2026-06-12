@@ -1,0 +1,14 @@
+,value
+n_anchor_hours,8760.0
+LOLP,0.0
+LOLE_hours_per_event,0.0
+EUE_mean_MWh,0.0
+EUE_p95_MWh,0.0
+EUE_p99_MWh,0.0
+EUE_max_MWh,0.0
+USE_hours_mean,0.0
+USE_hours_p95,0.0
+max_unserved_MW_mean,0.0
+max_unserved_MW_p95,0.0
+max_unserved_MW_max,0.0
+expected_opex_USD,1707784.1438027888

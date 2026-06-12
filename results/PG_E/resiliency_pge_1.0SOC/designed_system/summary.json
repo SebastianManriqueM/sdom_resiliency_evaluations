@@ -1,0 +1,167 @@
+{
+  "scenario_id": 1,
+  "year": 2030,
+  "snapshot_tag": "1.0SOC",
+  "counts": {
+    "storage_techs": 2,
+    "thermal_plants": 0,
+    "solar_plants": 1,
+    "wind_plants": 1
+  },
+  "storage": [
+    {
+      "tech": "Li-Ion",
+      "Cap_Pch_MW": 5.81148,
+      "Cap_Pdis_MW": 5.81148,
+      "Cap_E_MWh": 22.48472,
+      "eta_ch": 0.9219544457292888,
+      "eta_dis": 0.9219544457292888,
+      "vom_USD_per_MWh": 0.0,
+      "soc_min_frac_applied": 0.0,
+      "soc_min_MWh_applied": 0.0,
+      "duration_hours_Edis": 3.8690178749647246
+    },
+    {
+      "tech": "H2",
+      "Cap_Pch_MW": 6.77777,
+      "Cap_Pdis_MW": 3.0,
+      "Cap_E_MWh": 1205.59046,
+      "eta_ch": 0.6324555320336759,
+      "eta_dis": 0.6324555320336759,
+      "vom_USD_per_MWh": 0.0,
+      "soc_min_frac_applied": 0.09442841517695202,
+      "soc_min_MWh_applied": 113.84199649025257,
+      "duration_hours_Edis": 401.86348666666663
+    }
+  ],
+  "thermal": [],
+  "solar": {
+    "3621133": 16.0
+  },
+  "wind": {
+    "994997": 15.954676092
+  },
+  "soc_constraint": {
+    "user_floor_frac": 1.0,
+    "h2_reference_min_soc_MWh": 113.84199649025257,
+    "h2_reference_source": "min H2 SOC in CEM OutputStorage snapshot",
+    "h2_floor_MWh": 113.84199649025257,
+    "baseline_floor_frac_per_tech": {
+      "Li-Ion": 0.0,
+      "H2": 0.09442841517695202
+    },
+    "baseline_floor_per_tech_MWh": {
+      "Li-Ion": 0.0,
+      "H2": 113.84199649025257
+    },
+    "outage_min_soc_recovery_MWh": {
+      "Li-Ion": 0.0,
+      "H2": 113.84199649025257
+    },
+    "description": "H2 SOC floor for this scenario = user_floor_frac * h2_reference_min_soc_MWh (taken from the single CEM OutputStorage snapshot that pins capacities). Non-H2 storage techs receive a 0.0 floor and can cycle freely. The library API expects fractions of Cap_E; baseline_floor_frac_per_tech shows the value actually passed in. Outage recovery uses the same per-tech map."
+  },
+  "outage_window": {
+    "duration_hours": 48,
+    "recovery_hours": 48,
+    "outaged_components": [
+      "imports",
+      "wind",
+      "solar",
+      "balancing_units",
+      "hydro",
+      "nuclear",
+      "other_renewables",
+      "storage"
+    ]
+  },
+  "time_series": {
+    "load": {
+      "name": "load",
+      "length": 8760,
+      "sum_MWh": 28612.9221,
+      "mean_MW": 3.2663153082191783,
+      "min_MW": 0.64708,
+      "max_MW": 8.80692
+    },
+    "nuclear": {
+      "name": "nuclear",
+      "length": 8760,
+      "sum_MWh": 0.0,
+      "mean_MW": 0.0,
+      "min_MW": 0.0,
+      "max_MW": 0.0
+    },
+    "hydro": {
+      "name": "hydro",
+      "length": 8760,
+      "sum_MWh": 0.0,
+      "mean_MW": 0.0,
+      "min_MW": 0.0,
+      "max_MW": 0.0
+    },
+    "other_renewables": {
+      "name": "other_renewables",
+      "length": 8760,
+      "sum_MWh": 0.0,
+      "mean_MW": 0.0,
+      "min_MW": 0.0,
+      "max_MW": 0.0
+    },
+    "import_cap": {
+      "name": "import_cap",
+      "length": 8760,
+      "sum_MWh": 0.0,
+      "mean_MW": 0.0,
+      "min_MW": 0.0,
+      "max_MW": 0.0
+    },
+    "import_price": {
+      "name": "import_price",
+      "length": 8760,
+      "sum_MWh": 267880.79999999993,
+      "mean_MW": 30.57999999999999,
+      "min_MW": 30.58,
+      "max_MW": 30.58
+    },
+    "export_cap": {
+      "name": "export_cap",
+      "length": 8760,
+      "sum_MWh": 0.0,
+      "mean_MW": 0.0,
+      "min_MW": 0.0,
+      "max_MW": 0.0
+    },
+    "export_price": {
+      "name": "export_price",
+      "length": 8760,
+      "sum_MWh": 778945.7746281552,
+      "mean_MW": 88.92075052832821,
+      "min_MW": 0.0,
+      "max_MW": 581.9013605
+    }
+  },
+  "formulation_map": {
+    "Imports": "ImportsWithDemandChargesFormulation",
+    "Exports": "ExportsFormulation",
+    "Storage": "StorageFormulation",
+    "Thermal": "ThermalFormulation",
+    "Solar": "VREFormulation",
+    "Wind": "VREFormulation",
+    "Hydro": "HydroFormulation",
+    "Nuclear": "NuclearFormulation",
+    "OtherRenewables": "OtherRenewablesFormulation",
+    "Load": "LoadFormulation"
+  },
+  "baseline_costs": {
+    "objective_total_USD": 995860.3629956,
+    "solver_status": "optimal",
+    "thermal_var_USD": 0.0,
+    "storage_var_USD": 0.0,
+    "imports_USD": 0.0,
+    "exports_USD": 0.0,
+    "demand_charges_USD": 0.0,
+    "curtailment_USD": 0.0,
+    "fom_USD": 995860.3629956,
+    "total_USD": 995860.3629956
+  }
+}
