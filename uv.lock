@@ -498,8 +498,8 @@ wheels = [
 
 [[package]]
 name = "sdom"
-version = "0.2.1"
-source = { editable = "../SDOM" }
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "highspy" },
     { name = "matplotlib" },
@@ -507,45 +507,14 @@ dependencies = [
     { name = "pandas" },
     { name = "pyomo" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/66/2a/25e9b81806f868f7b75e2316cbd4527d62446fb3d91a3ac8ea01b6afd563/sdom-0.2.3.tar.gz", hash = "sha256:f8aa52c48b73d0d2c67fcbf0d271448ce2006f36313bb2aabac301cb0c52a362", size = 136606, upload-time = "2026-06-12T22:20:13.712Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/c0/633e661fb4b45cdec401ffc4751eaf71f1caf2c058b549a2caba20a88c52/sdom-0.2.3-py3-none-any.whl", hash = "sha256:2a56049cb8b8abc973b83aa8ef73c3689ab2433529ca5c599f080edf4e8c7f50", size = 158837, upload-time = "2026-06-12T22:20:12.426Z" },
+]
 
 [package.optional-dependencies]
 xpress = [
     { name = "xpress" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "highspy", specifier = "==1.14.0" },
-    { name = "matplotlib", specifier = ">=3.8.0,<4.0.0" },
-    { name = "numpy", specifier = ">=2.2.0,<3.0.0" },
-    { name = "pandas", specifier = ">=2.2.0,<3.0.0" },
-    { name = "pyomo", specifier = "==6.10.0" },
-    { name = "xpress", marker = "extra == 'xpress'", specifier = ">=9.0.0,<9.8" },
-]
-provides-extras = ["xpress"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.2,<10.0.0" },
-    { name = "pytest-benchmark", specifier = ">=5.1.0,<6.0.0" },
-    { name = "pytest-cov", specifier = ">=6.0.0,<7.0.0" },
-    { name = "ruff", specifier = ">=0.13.2,<0.15.0" },
-    { name = "ty", specifier = ">=0.0.12,<1.0.0" },
-]
-docs = [
-    { name = "autodoc-pydantic", specifier = ">=2.0.0,<3.0.0" },
-    { name = "docstr-coverage", specifier = ">=2.3.2,<3.0.0" },
-    { name = "furo", specifier = ">=2025.9.25,<2026.0.0" },
-    { name = "ghp-import", specifier = ">=2.1.0,<3.0.0" },
-    { name = "myst-parser", specifier = ">=3.0.0,<5.0.0" },
-    { name = "pydata-sphinx-theme", specifier = ">=0.16.1" },
-    { name = "sphinx", specifier = ">=7.2.0,<8.0.0" },
-    { name = "sphinx-autodoc-typehints", specifier = ">=2.3.0" },
-    { name = "sphinx-copybutton", specifier = ">=0.5.2,<1.0.0" },
-    { name = "sphinx-design", specifier = ">=0.7.0" },
-    { name = "sphinx-reports", specifier = ">=0.1.0,<1.0.0" },
-    { name = "sphinx-tabs", specifier = ">=3.4.5,<4.0.0" },
-    { name = "sphinxcontrib-mermaid", specifier = ">=2.0.0,<3.0.0" },
 ]
 
 [[package]]
@@ -557,7 +526,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "sdom", extras = ["xpress"], editable = "../SDOM" }]
+requires-dist = [{ name = "sdom", extras = ["xpress"], specifier = "==0.2.3" }]
 
 [[package]]
 name = "six"
