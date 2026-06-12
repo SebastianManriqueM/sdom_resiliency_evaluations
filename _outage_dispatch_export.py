@@ -106,6 +106,7 @@ def _solve_one_hour_with_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
             soc_slack_penalty=float(payload.get("soc_slack_penalty", 1_000.0)),
             min_soc_per_tech=payload.get("min_soc_per_tech"),
             n_hours=n_hours,
+            critical_load_MW=payload.get("critical_load_MW"),
         )
         solver = _resolve_solver(str(payload["solver"]))
         solver_options = payload.get("solver_options") or {}
@@ -311,6 +312,7 @@ def run_outage_evaluation_with_dispatch(
     curtailment_penalty=0.0,
     soc_slack_penalty=1_000.0,
     min_soc_per_tech=None,
+    critical_load_MW=None,
     n_hours=8760,
     hours=None,
     n_workers=None,
@@ -334,6 +336,11 @@ def run_outage_evaluation_with_dispatch(
         Forwarded to :func:`sdom.resiliency.build_outage_dispatch`.
     min_soc_per_tech : dict, optional
         Operational SOC floor per storage tech (fraction of ``Cap_E``).
+    critical_load_MW : float, optional
+        Constant critical load (MW) used in place of the hourly load
+        series over the outage sub-horizon only. ``None`` (default)
+        leaves the hourly load untouched. Forwarded to
+        :func:`sdom.resiliency.build_outage_dispatch`.
     n_hours : int, optional
         Length of the baseline horizon (used for end-of-year clipping).
     hours : iterable of int, optional
@@ -397,6 +404,9 @@ def run_outage_evaluation_with_dispatch(
             "curtailment_penalty": float(curtailment_penalty),
             "soc_slack_penalty": float(soc_slack_penalty),
             "min_soc_per_tech": min_soc_per_tech,
+            "critical_load_MW": (
+                None if critical_load_MW is None else float(critical_load_MW)
+            ),
             "n_hours": n_hours,
             "solver": solver,
             "solver_options": dict(solver_options) if solver_options else {},

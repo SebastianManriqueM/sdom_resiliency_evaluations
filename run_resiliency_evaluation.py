@@ -65,7 +65,7 @@ SOLVER = "xpress"
 SOLVER_OPTIONS: dict = {"mipgap": 0.0001}
 SLACK_PENALTY = 10_000.0
 
-OUTPUT_DIR = REPO_ROOT / "results" / f"resiliency_mea_{SOC_TAG}"
+OUTPUT_DIR = REPO_ROOT / "results" / "MEA" / f"resiliency_mea_{SOC_TAG}"
 
 
 def _configure_logging() -> None:
@@ -94,8 +94,14 @@ def _find_snapshot_file(snapshot_dir: Path, prefix: str, year: int) -> Path:
 
 
 
-def _build_storage_only_outage(designed_system, h2_floor_mwh: float) -> OutageSpec:
-    """Outage every non-storage component plus Li-Ion for OUTAGE_HOURS at factor 0.
+def _build_storage_only_outage(
+    designed_system,
+    h2_floor_mwh: float,
+    *,
+    outage_hours: int = OUTAGE_HOURS,
+    recovery_hours: int = RECOVERY_HOURS,
+) -> OutageSpec:
+    """Outage every non-storage component plus Li-Ion for ``outage_hours`` at factor 0.
 
     Li-Ion is treated as outaged during the outage window (so only H2 can
     ride through), but recovers automatically when the outage window ends
@@ -111,8 +117,8 @@ def _build_storage_only_outage(designed_system, h2_floor_mwh: float) -> OutageSp
     if li_ion_techs:
         outaged["storage"] = li_ion_techs
     return OutageSpec(
-        duration_hours=OUTAGE_HOURS,
-        recovery_hours=RECOVERY_HOURS,
+        duration_hours=outage_hours,
+        recovery_hours=recovery_hours,
         outaged_assets=outaged,
         min_soc_recovery=_h2_only_soc_map(designed_system.storage_caps, h2_floor_mwh),
     )
@@ -130,13 +136,13 @@ def _find_phase1_summary(snapshot_dir: Path, year: int) -> Path:
     return matches[0]
 
 
-def _read_h2_phase1_caps(snapshot_dir: Path) -> tuple[float, float]:
+def _read_h2_phase1_caps(snapshot_dir: Path, year: int = YEAR) -> tuple[float, float]:
     """Return ``(Cap_E_Phase1, Pdis_Phase1)`` for H2 from the Phase1 summary.
 
     Reads ``Energy capacity`` (MWh) and ``Discharge power capacity`` (MW)
     rows for the H2 technology out of the Phase1 ``OutputSummary``.
     """
-    summary_file = _find_phase1_summary(snapshot_dir, YEAR)
+    summary_file = _find_phase1_summary(snapshot_dir, year)
     df = pd.read_csv(summary_file)
     tech = df["Technology"].astype(str).str.strip().str.upper()
     metric = df["Metric"].astype(str).str.strip()
@@ -164,7 +170,11 @@ def _read_h2_efficiency(inputs_dir: Path, year: int) -> float:
     return float(df.at["Eff", "H2"])
 
 
-def _read_h2_reference_soc(snapshot_dir: Path, inputs_dir: Path) -> float:
+def _read_h2_reference_soc(
+    snapshot_dir: Path,
+    inputs_dir: Path,
+    year: int = YEAR,
+) -> float:
     """Return the H2 reference floor SOC (MWh) derived from Phase1 CEM outputs.
 
     Formula
@@ -174,11 +184,11 @@ def _read_h2_reference_soc(snapshot_dir: Path, inputs_dir: Path) -> float:
     where ``Cap_E_Phase1`` and ``Pdis_Phase1`` come from the H2 ``Energy
     capacity`` and ``Discharge power capacity`` rows of the Phase1 CEM
     ``OutputSummary``, and ``Eff_H2`` is the round-trip efficiency from
-    ``StorageData_{YEAR}.csv``. The added term is the 1-hour discharge
+    ``StorageData_{year}.csv``. The added term is the 1-hour discharge
     headroom adjusted by the one-way efficiency.
     """
-    cap_e_phase1, pdis_phase1 = _read_h2_phase1_caps(snapshot_dir)
-    eff_h2 = _read_h2_efficiency(inputs_dir, YEAR)
+    cap_e_phase1, pdis_phase1 = _read_h2_phase1_caps(snapshot_dir, year)
+    eff_h2 = _read_h2_efficiency(inputs_dir, year)
     if eff_h2 <= 0.0:
         raise ValueError(f"H2 Eff must be > 0; got {eff_h2}.")
     return cap_e_phase1 + pdis_phase1 / math.sqrt(eff_h2)
@@ -251,6 +261,8 @@ def _dump_designed_system_summary(
     min_soc_recovery_frac: float,
     h2_ref_soc: float,
     h2_floor_mwh: float,
+    soc_tag: str = SOC_TAG,
+    outaged_components: tuple[str, ...] = tuple(VALID_COMPONENTS),
 ) -> None:
     """Write the designed-system capacities, parameters, and SOC constraint to disk.
 
@@ -307,7 +319,7 @@ def _dump_designed_system_summary(
     summary = {
         "scenario_id": int(designed_system.scenario_id),
         "year": int(designed_system.year),
-        "snapshot_tag": SOC_TAG,
+        "snapshot_tag": soc_tag,
         "counts": {
             "storage_techs": len(designed_system.storage_caps),
             "thermal_plants": len(designed_system.thermal_caps),
@@ -319,7 +331,7 @@ def _dump_designed_system_summary(
         "solar": {k: float(v) for k, v in designed_system.solar_caps.items()},
         "wind": {k: float(v) for k, v in designed_system.wind_caps.items()},
         "soc_constraint": {
-            "user_floor_frac": MIN_SOC_FRAC,
+            "user_floor_frac": min_soc_recovery_frac,
             "h2_reference_min_soc_MWh": h2_ref_soc,
             "h2_reference_source": "min H2 SOC in CEM OutputStorage snapshot",
             "h2_floor_MWh": h2_floor_mwh,
@@ -350,7 +362,7 @@ def _dump_designed_system_summary(
         "outage_window": {
             "duration_hours": outage_hours,
             "recovery_hours": recovery_hours,
-            "outaged_components": list(VALID_COMPONENTS),
+            "outaged_components": list(outaged_components),
         },
         "time_series": {
             "load": _series_stat(designed_system.load, "load"),
