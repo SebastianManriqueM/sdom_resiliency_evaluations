@@ -5,12 +5,15 @@ Keep entries terse (one-line bullets when possible). Update or remove entries th
 
 ## Repository Layout
 
-- `run_resiliency_evaluation.py` - main driver: builds baseline, runs per-anchor outage sweep, aggregates metrics + plots for one SOC tag.
-- `_outage_dispatch_export.py` - driver-side wrapper around `sdom.resiliency.build_outage_dispatch` that also persists per-hour dispatch trajectories for loss-event anchors.
-- `make_sweep_summary.py` - cross-tag aggregator over `results/resiliency_mea_<tag>/`.
-- `data/MEA/` - CEM snapshot + previous-stage inputs (never modify in place).
-- `results/resiliency_mea_<tag>/` - one folder per H2 SOC floor sweep tag.
-- `results/sweep_summary/` - cross-tag aggregated CSVs + PNGs.
+- `run_resiliency_evaluation.py` - MEA driver: builds baseline, runs per-anchor outage sweep, aggregates metrics + plots for one SOC tag. Its helpers (`_build_storage_only_outage`, `_read_h2_*`, `_dump_designed_system_summary`, `_save_baseline_timeseries`, `_save_plots`, `_summarize_metrics`, `_h2_only_soc_map`, `_append_baseline_costs_to_summary`) are reusable: they all take year/window/tag/components as params (no MEA-specific module globals leak).
+- `run_resiliency_evaluation_pge.py` - PG_E off-grid driver: reuses the MEA helpers, zeroes Import_Cap/Export_Cap via a tempdir mirror + mutates `designed_system.{import,export}_cap` to zeros, calls `build_baseline_dispatch(..., add_demand_charges=False)` and `run_outage_evaluation_with_dispatch(..., critical_load_MW=3.0)`.
+- `_outage_dispatch_export.py` - driver-side wrapper around `sdom.resiliency.build_outage_dispatch` that also persists per-hour dispatch trajectories for loss-event anchors. Now plumbs `critical_load_MW` through to the outage builder.
+- `_pge_smoke_test.py` - 3-hour smoke harness for the PG_E driver (baseline + outage hours `[1, 2000, 5000]`, serial). Use when validating off-grid plumbing without paying for the full 8760-hour sweep.
+- `make_sweep_summary.py` - cross-tag aggregator. Case-aware via `CASE_DIRS = {"mea": "MEA", "pge": "PG_E"}`: scans `results/<CASE_DIR>/resiliency_<case>_<tag>/` and writes per-case summaries under `results/sweep_summary/<case>/`.
+- `rerun_all.ps1`, `rerun_pge_all.ps1` - per-case sweep launchers (loop 6 SOC tags, log per-tag + master log, then invoke `make_sweep_summary.py`).
+- `data/MEA/`, `data/PG_E/` - CEM snapshots + previous-stage inputs (never modify in place).
+- `results/MEA/resiliency_mea_<tag>/`, `results/PG_E/resiliency_pge_<tag>/` - one folder per case x SOC floor sweep tag (case-segregated).
+- `results/sweep_summary/<case>/` - cross-tag aggregated CSVs + PNGs per case.
 
 ## Pinned Stack
 
@@ -30,6 +33,7 @@ Keep entries terse (one-line bullets when possible). Update or remove entries th
 - Pyomo emits a benign `WARNING Failed to create solver with name 'appsi_xpress'` once per process: the SolverFactory tries the APPSI shim first, then falls back to the legacy `xpress` interface. Safe to ignore - the next log line confirms `Solving ... with solver='xpress'`.
 - VS Code terminal wrapper strips leading `cd`/`Set-Location` from chained commands when cwd != target. Workaround: save a `.ps1` script and invoke via `pwsh -NoProfile -ExecutionPolicy Bypass -File <abs path>`, or use `uv run --directory <abs path>`.
 - `sdom` package does not export `__version__`; query install metadata via `uv pip show sdom` (or `importlib.metadata.version("sdom")`).
+- The 8760-anchor ProcessPool occasionally dies with `BrokenProcessPool` / `OSError: handle is closed` on Windows (seen once on 0.9SOC, ~30 s in). Not deterministic - rerunning that single tag worked on the next attempt. If it recurs across multiple tags, reduce `n_workers` in [_outage_dispatch_export.py](_outage_dispatch_export.py).
 
 ## Anti-Patterns
 
@@ -38,11 +42,14 @@ Keep entries terse (one-line bullets when possible). Update or remove entries th
 
 ## Recent Decisions / Changes
 
-- 2026-06-12 - bumped pinned dep to `sdom[xpress]==0.2.3` (latest PyPI, released same day) and `uv sync`ed `.venv`. Note: `sdom` package does not expose `__version__`; verify via `uv pip show sdom`. Existing `results/` were generated against 0.2.2 - rerun the sweep if comparing apples-to-apples.
+- 2026-06-12 - ran full PG_E sweep via `rerun_pge_all.ps1` (29.8 min wall, 6 tags, 21 workers each, all `exit=0`, no `BrokenProcessPool`). Per-tag breakdown ~4.6-5.6 min each. Headline metrics: LOLP ranges 0.145 (1.0SOC) -> 0.333 (0.6SOC) - non-monotonic because the 3 MW critical-load override creates the same outage demand at every SOC tag, but baseline pre-outage SOC trajectories differ. `expected_opex_USD` ranges 81k (1.0SOC) -> 180k (0.6SOC). Baseline objective is identical across tags (995,860 USD = pure FOM, no thermal/grid/demand-charge costs) confirming off-grid plumbing works end-to-end. `make_sweep_summary.py` regenerated both `mea/` and `pge/` aggregates under `results/sweep_summary/`.
+- 2026-06-12 - reorganized `results/` so MEA and PG_E outputs are case-segregated: `results/MEA/resiliency_mea_<tag>/` and `results/PG_E/resiliency_pge_<tag>/`. Both drivers' `OUTPUT_DIR` constants updated. `make_sweep_summary.py` gained `CASE_DIRS = {"mea": "MEA", "pge": "PG_E"}` and helpers `_case_root(case)`/`_iter_case_dirs(case)` to walk the new layout.
+- 2026-06-12 - added PG_E off-grid driver `run_resiliency_evaluation_pge.py`. Off-grid is enforced by (a) mirroring `data/PG_E/inputs_csv/Paper` to a tempdir with `Import_Cap_2030.csv`/`Export_Cap_2030.csv` rewritten to zeros (kills baseline grid flows that go through cem_data), (b) overwriting `designed_system.import_cap`/`export_cap` to zero series after load (kills outage-LP grid flows that read these directly), and (c) passing `add_demand_charges=False` to `build_baseline_dispatch`. Critical outage load is the new `critical_load_MW` kwarg (=3.0 MW for PG_E), now plumbed through `_outage_dispatch_export.run_outage_evaluation_with_dispatch` -> `build_outage_dispatch`. Smoke test (3 anchors) passes; full sweep is the user's call.
+- 2026-06-12 - made MEA helpers parameter-driven so the PG_E driver can reuse them: `_read_h2_phase1_caps(snapshot_dir, year)`, `_read_h2_reference_soc(snapshot_dir, inputs_dir, year)`, `_build_storage_only_outage(..., outage_hours, recovery_hours)`, `_dump_designed_system_summary(..., soc_tag, outaged_components)`. Defaults preserve MEA behaviour.
+- 2026-06-12 - generalized `make_sweep_summary.py` to scan all `resiliency_<case>_<tag>` directories. New `CASE_PATTERN = r"^resiliency_(?P<case>[a-z0-9]+)_(?P<tag>[0-9.]+SOC)$"`. Per-case CSVs/plots land in `results/sweep_summary/<case>/`. Existing MEA outputs that lived directly under `results/sweep_summary/` are now stale - rerun to regenerate under `results/sweep_summary/mea/`.
+- 2026-06-12 - reran full MEA sweep against sdom 0.2.3 via [rerun_all.ps1](rerun_all.ps1) (now also invokes `make_sweep_summary.py`). Total wall = 24.0 min for 6 tags + 0.7 min retry. 0.9SOC hit a one-off `BrokenProcessPool` on the first pass; standalone rerun succeeded. Aggregate metrics vs 0.2.2 are essentially unchanged.
+- 2026-06-12 - bumped pinned dep to `sdom[xpress]==0.2.3` (latest PyPI, released same day) and `uv sync`ed `.venv`. `sdom` package does not expose `__version__`; verify via `uv pip show sdom`.
 - 2026-06-12 - switched repo dependency from editable `../SDOM` to pinned `sdom[xpress]==0.2.2` (PyPI).
-- 2026-06-12 - added `expected_opex_USD` metric to per-run aggregate + sweep summary. Total wall = 31.14 min (0.5SOC: 7.15 min, others 3.8-5.1 min). All exit=0.
-- 2026-06-12 - sweep summary regenerated. New `expected_opex_USD` ranges 1.53M (0.7SOC) to 2.20M (0.5SOC) USD/hr. LOLP drops to 0 at >=0.8SOC. Objective totals 55.7M-57.9M USD; FOM constant 22.81M across all tags as expected.
-- 2026-06-12 - re-ran all 6 MEA cases against released sdom 0.2.2 (anchor-hour SOC fix + FOM cost in objective).
 
 ## Update Protocol (end of each task)
 
