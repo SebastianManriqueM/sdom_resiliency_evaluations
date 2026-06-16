@@ -61,8 +61,8 @@
     "description": "H2 SOC floor for this scenario = user_floor_frac * h2_reference_min_soc_MWh (taken from the single CEM OutputStorage snapshot that pins capacities). Non-H2 storage techs receive a 0.0 floor and can cycle freely. The library API expects fractions of Cap_E; baseline_floor_frac_per_tech shows the value actually passed in. Outage recovery uses the same per-tech map."
   },
   "outage_window": {
-    "duration_hours": 48,
-    "recovery_hours": 48,
+    "duration_hours": 24,
+    "recovery_hours": 24,
     "outaged_components": [
       "imports",
       "wind",
