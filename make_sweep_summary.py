@@ -11,6 +11,8 @@ For each case (``mea``, ``pge``, ...) present under ``results/`` as
 * ``sweep_soc_slack_metrics.csv`` (one row per tag x tech)
 * ``{SOC_slack_probability,SOC_slack_MWh_mean_p95_p99,
   SOC_slack_fraction_mean,SOC_slack_cost_total_USD}.png``
+* ``{EUE_total_MWh,EUE_cost_total_USD}.png`` (annual unserved-energy
+  totals across all anchors)
 * ``sweep_objective_costs.csv`` (one row per tag)
 * ``objective_total_USD.png`` plus ``*_vs_cost.png`` overlays
 
@@ -42,6 +44,9 @@ CASE_DIRS: dict[str, str] = {
     "pge": "PG_E",
 }
 SLACK_EPS = 1e-6
+# USD per MWh of unserved energy in the per-anchor outage LP (must match
+# ``SLACK_PENALTY`` in the driver scripts).
+UNSERVED_ENERGY_PENALTY_USD_PER_MWH = 10_000.0
 
 
 def _configure_logging() -> None:
@@ -106,16 +111,22 @@ def _collect(case: str) -> pd.DataFrame:
             continue
         soc_frac = float(tag.replace("SOC", ""))
         metrics = _read_aggregate(entry)
+        n_anchor_hours = float(metrics.get("n_anchor_hours", 0.0))
+        eue_mean = float(metrics.get("EUE_mean_MWh", 0.0))
+        eue_total_mwh = n_anchor_hours * eue_mean
         rows.append(
             {
                 "case": case,
                 "tag": tag,
                 "soc_frac": soc_frac,
+                "n_anchor_hours": n_anchor_hours,
                 "LOLP": metrics.get("LOLP", 0.0),
                 "LOLE_hours_per_event": metrics.get("LOLE_hours_per_event", 0.0),
-                "EUE_mean_MWh": metrics.get("EUE_mean_MWh", 0.0),
+                "EUE_mean_MWh": eue_mean,
                 "EUE_p95_MWh": metrics.get("EUE_p95_MWh", 0.0),
                 "EUE_p99_MWh": metrics.get("EUE_p99_MWh", 0.0),
+                "EUE_total_MWh": eue_total_mwh,
+                "EUE_cost_total_USD": eue_total_mwh * UNSERVED_ENERGY_PENALTY_USD_PER_MWH,
                 "max_unserved_MW_mean": metrics.get("max_unserved_MW_mean", 0.0),
                 "max_unserved_MW_p95": metrics.get("max_unserved_MW_p95", 0.0),
                 "max_unserved_MW_p99": metrics.get("max_unserved_MW_p99", 0.0),
@@ -198,6 +209,52 @@ def _save_plots(df: pd.DataFrame, out_dir: Path) -> None:
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(out_dir / "expected_opex_USD.png", dpi=120)
+    plt.close(fig)
+
+    # Annual total unserved energy (MWh, summed across all anchors).
+    tags = [f"{v:g}" for v in x]
+    eue_mwh = df["EUE_total_MWh"].to_numpy()
+    fig, ax = plt.subplots(figsize=(6, 4))
+    bars = ax.bar(tags, eue_mwh, color="C3", edgecolor="black", alpha=0.85)
+    for bar, value in zip(bars, eue_mwh):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.1f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+    ax.set_xlabel("H2 SOC floor fraction")
+    ax.set_ylabel("Total unserved energy [MWh]")
+    ax.set_title("Annual unserved-energy total vs H2 SOC floor")
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_dir / "EUE_total_MWh.png", dpi=120)
+    plt.close(fig)
+
+    # Annual unserved-energy slack cost (M USD), mirrors SOC_slack_cost_total_USD.
+    eue_cost_musd = df["EUE_cost_total_USD"].to_numpy() / 1e6
+    fig, ax = plt.subplots(figsize=(6, 4))
+    bars = ax.bar(tags, eue_cost_musd, color="C3", edgecolor="black", alpha=0.85)
+    for bar, value in zip(bars, eue_cost_musd):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+    ax.set_xlabel("H2 SOC floor fraction")
+    ax.set_ylabel("Total unserved-energy slack cost [M USD]")
+    ax.set_title(
+        f"Annual unserved-energy cost vs H2 SOC floor "
+        f"(penalty = {UNSERVED_ENERGY_PENALTY_USD_PER_MWH:,.0f} USD/MWh)"
+    )
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_dir / "EUE_cost_total_USD.png", dpi=120)
     plt.close(fig)
 
 
